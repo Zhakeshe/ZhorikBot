@@ -1,6 +1,7 @@
 from typing import List, Optional, Tuple
+
 from aiogram import Bot
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 from aiogram.types import User
 
 SUB_CHANNELS = ["@ZhorikBase", "@ZhorikBaseProofs"]
@@ -26,6 +27,10 @@ async def ensure_subscription(bot: Bot, user: User) -> Tuple[bool, List[str]]:
             member = await bot.get_chat_member(chat_id=channel, user_id=user.id)
             if member.status in {"left", "kicked"}:
                 missing.append(channel)
-        except TelegramForbiddenError:
+        except (TelegramForbiddenError, TelegramAPIError):
+            # Treat any access or API issues as a missing subscription to avoid silent failures
+            missing.append(channel)
+        except Exception:
+            # Fallback safety: never break handlers because of subscription check
             missing.append(channel)
     return (not missing, missing)

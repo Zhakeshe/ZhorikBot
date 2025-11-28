@@ -32,7 +32,8 @@ async def handle_search(message: Message, command: CommandObject) -> None:
         await message.answer("Укажите ID или username для поиска: /search id123 или /search @name")
 
 
-@router.message(F.text)
+# Non-blocking free-text handler so command messages continue to other routers
+@router.message(F.text, flags={"block": False})
 async def handle_free_text(message: Message) -> None:
     if message.text and message.text.startswith("/"):
         return
