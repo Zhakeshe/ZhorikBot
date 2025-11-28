@@ -23,9 +23,9 @@ from aiogram.types import (
 # =========================================
 # CONFIGURATION
 # =========================================
-BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN = "8211206850:AAFhBZ2Y6q7UCU0271r3AUJL4iRfsMroGCY"
 
-ADMIN_IDS = [123456789]
+ADMIN_IDS = [7874477752]
 REQUIRED_CHANNELS = ["@ZhorikBase", "@ZhorikBaseProofs"]
 
 GROUP_LINK = "@ZhorikBase"
