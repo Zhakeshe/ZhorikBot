@@ -2,9 +2,9 @@ import asyncio
 import os
 from typing import List
 
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from bot.keyboards.subscription import subscription_keyboard
 from bot.utils.checks import ensure_subscription, parse_search_query
@@ -43,23 +43,12 @@ def notify_admins(message: Message, text: str) -> None:
         asyncio.create_task(message.bot.send_message(admin_id, text))
 
 
-@router.message(Command("admin"))
-async def handle_admin(message: Message) -> None:
-    subscribed, _ = await ensure_subscription(message.bot, message.from_user)
-    if not subscribed:
-        await message.answer(
-            "Для работы бота необходима подписка на каналы.",
-            reply_markup=subscription_keyboard(),
-        )
-        return
-    if not is_admin(message.from_user.id):
-        await message.answer("Команда доступна только админам.")
-        return
+def build_admin_panel_text() -> str:
     stats = stats_by_status()
     statuses = get_statuses()
     stats_lines = "\n".join([f"{statuses.get(code, {}).get('title', code)}: {count}" for code, count in stats.items()])
     moderation_lines = "\n".join([f"• {mid}" for mid in get_moderators()]) or "нет модераторов"
-    await message.answer(
+    return (
         "📊 Панель администратора\n\n"
         f"Пользователи по статусам:\n{stats_lines or 'нет данных'}\n\n"
         f"Количество модераторов: {len(get_moderators())}\n{moderation_lines}\n\n"
@@ -73,6 +62,36 @@ async def handle_admin(message: Message) -> None:
         "/setstatus target status [proof] [comment] — изменить статус пользователя\n"
         "/logs — показать логи"
     )
+
+
+@router.message(Command("admin"))
+async def handle_admin(message: Message) -> None:
+    subscribed, _ = await ensure_subscription(message.bot, message.from_user)
+    if not subscribed:
+        await message.answer(
+            "Для работы бота необходима подписка на каналы.",
+            reply_markup=subscription_keyboard(),
+        )
+        return
+    if not is_admin(message.from_user.id):
+        await message.answer("Команда доступна только админам.")
+        return
+    await message.answer(build_admin_panel_text())
+
+
+@router.callback_query(F.data == "menu_admin")
+async def handle_menu_admin(call: CallbackQuery) -> None:
+    subscribed, _ = await ensure_subscription(call.bot, call.from_user)
+    if not subscribed:
+        await call.message.answer(
+            "Для работы бота необходима подписка на каналы.",
+            reply_markup=subscription_keyboard(),
+        )
+        return
+    if not is_admin(call.from_user.id):
+        await call.message.answer("Команда доступна только админам.")
+        return
+    await call.message.answer(build_admin_panel_text())
 
 
 @router.message(Command("addmod"))
