@@ -319,15 +319,16 @@ async def cmd_help(message: Message) -> None:
         "/help — помощь\n"
         "/info — список статусов\n"
         "/me — ваш профиль\n"
-        "/search <запрос> — поиск по id/username\n"
+        "/search &lt;запрос&gt; — поиск по id/username\n"
         "/check — ответом на сообщение в чате покажет статус\n"
         "/admin — панель администратора\n"
-        "/addmod <id> — добавить модератора\n"
-        "/delmod <id> — удалить модератора\n"
+        "/addmod &lt;id&gt; — добавить модератора\n"
+        "/delmod &lt;id&gt; — удалить модератора\n"
         "/listmods — список модераторов\n"
         "/setstatus @user статус [пруф] [комментарий] — изменить статус"
     )
     await message.answer(text)
+
 
 
 @router.message(Command("info"))
@@ -540,7 +541,9 @@ async def callback_check_sub(callback: CallbackQuery) -> None:
 async def callback_menu_search(callback: CallbackQuery) -> None:
     if not await ensure_subscription_for_callback(callback, callback.bot):
         return
-    await callback.message.answer("Введите запрос командой /search <id|username> для проверки статуса.")
+    await callback.message.answer(
+        "Введите запрос командой: /search &lt;id|username&gt;"
+    )
     await callback.answer()
 
 
