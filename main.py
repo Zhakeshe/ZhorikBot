@@ -1,56 +1,48 @@
-
 import asyncio
 import json
+import logging
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ChatMemberStatus, ParseMode
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command, CommandObject
 from aiogram.types import (
-    Message,
     CallbackQuery,
-    InlineKeyboardMarkup,
     InlineKeyboardButton,
+    InlineKeyboardMarkup,
     InlineQuery,
     InlineQueryResultArticle,
     InputTextMessageContent,
+    Message,
 )
-from aiogram.filters import Command
-from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.context import FSMContext
-from aiogram.client.default import DefaultBotProperties
 
-# =========================
-# CONFIG
-# =========================
-
+# =========================================
+# CONFIGURATION
+# =========================================
 BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
 
-# Админдар ID (өз Telegram ID-ңді осында жаз)
-ADMIN_IDS = [
-    123456789
-]
-
-# Міндетті подписка арналары
+ADMIN_IDS = [123456789]
 REQUIRED_CHANNELS = ["@ZhorikBase", "@ZhorikBaseProofs"]
 
-# Текст футер (барлық статус астында)
 GROUP_LINK = "@ZhorikBase"
 CHANNEL_LINK = "@ZhorikBaseProofs"
 BOT_LINK = "@ZhorikBaseRobot"
-
 FOOTER = f"\n\nГруппа: {GROUP_LINK}\nКанал: {CHANNEL_LINK}\nЛичка: {BOT_LINK}"
 
-# Фото file_id немесе URL — сен кейін өзіңе керекшесін қоясың
-PHOTO_UNKNOWN = "UNKNOWN_PHOTO_FILE_ID"
-PHOTO_VERIFIED = "VERIFIED_PHOTO_FILE_ID"
-PHOTO_DOUBTFUL = "DOUBTFUL_PHOTO_FILE_ID"
-PHOTO_SCAMMER = "SCAMMER_PHOTO_FILE_ID"
-PHOTO_GUARANTOR = "GUARANTOR_PHOTO_FILE_ID"
-PHOTO_TEAM = "TEAM_PHOTO_FILE_ID"
+PHOTO_START = "https://placehold.co/800x400/0a0/fff.png?text=ZhorikBase"
+PHOTO_UNKNOWN = "https://placehold.co/600x400/555/fff.png?text=Unknown"
+PHOTO_VERIFIED = "https://placehold.co/600x400/2ecc71/fff.png?text=Verified"
+PHOTO_DOUBTFUL = "https://placehold.co/600x400/f39c12/fff.png?text=Doubtful"
+PHOTO_SCAMMER = "https://placehold.co/600x400/e74c3c/fff.png?text=Scammer"
+PHOTO_GUARANTOR = "https://placehold.co/600x400/3498db/fff.png?text=Guarantor"
+PHOTO_TEAM = "https://placehold.co/600x400/9b59b6/fff.png?text=Team"
 
-DATA_PATH = "database.json"
+DATA_PATH = Path("database.json")
 
-# Статус кодтары
 STATUS_TEAM = "team"
 STATUS_GUARANTOR = "guarantor"
 STATUS_VERIFIED = "verified"
@@ -58,48 +50,90 @@ STATUS_UNKNOWN = "unknown"
 STATUS_DOUBTFUL = "doubtful"
 STATUS_SCAMMER = "scammer"
 
-STATUS_ORDER = [
-    STATUS_TEAM,
-    STATUS_GUARANTOR,
-    STATUS_VERIFIED,
-    STATUS_UNKNOWN,
-    STATUS_DOUBTFUL,
-    STATUS_SCAMMER,
-]
-
 STATUS_TITLES = {
-    STATUS_TEAM: "⚙️ Команда бота",
-    STATUS_GUARANTOR: "🛡 Гарант антискам-базы",
-    STATUS_VERIFIED: "🟢 Проверенный пользователь",
-    STATUS_UNKNOWN: "❓ Неизвестный пользователь",
-    STATUS_DOUBTFUL: "🟠 Пользователь сомнителен",
+    STATUS_TEAM: "⚙ Команда бота",
+    STATUS_GUARANTOR: "🛡 Гарант",
+    STATUS_VERIFIED: "🟢 Проверенный",
+    STATUS_UNKNOWN: "❓ Неизвестный",
+    STATUS_DOUBTFUL: "🟠 Сомнительный",
     STATUS_SCAMMER: "🔴 Мошенник",
 }
 
-# =========================
-# DB HELPERS
-# =========================
+STATUS_DESCRIPTIONS = {
+    STATUS_TEAM: "Участник команды ZhorikBase с полными полномочиями.",
+    STATUS_GUARANTOR: "Авторизованный гарант антискам-проекта.",
+    STATUS_VERIFIED: "Пользователь честный. Основано на репутации.",
+    STATUS_UNKNOWN: "Информации недостаточно. Будьте бдительны.",
+    STATUS_DOUBTFUL: "Есть сомнения. Требуется дополнительная проверка.",
+    STATUS_SCAMMER: "Фиксированы жалобы. Опасность мошенничества!",
+}
+
+DEFAULT_DB: Dict[str, Any] = {
+    "users": {
+        "75874120": {
+            "id": 75874120,
+            "username": "aqrxrx",
+            "status": STATUS_SCAMMER,
+            "proof": "https://t.me/link",
+            "comment": "много жалоб",
+            "updated_by": 123456,
+            "updated_at": "2025-01-01T10:00:00",
+        }
+    },
+    "moderators": [123],
+    "logs": [
+        {
+            "time": "2025-01-01T10:00:00",
+            "moderator_id": 123,
+            "target_id": 75874120,
+            "old_status": "unknown",
+            "new_status": STATUS_SCAMMER,
+            "proof": "https://t.me/link",
+            "comment": "много жалоб",
+        }
+    ],
+}
+
+logging.basicConfig(level=logging.INFO)
+router = Router()
+
+
+# =========================================
+# DATABASE HELPERS
+# =========================================
+def ensure_db_exists() -> None:
+    if not DATA_PATH.exists():
+        DATA_PATH.write_text(json.dumps(DEFAULT_DB, ensure_ascii=False, indent=2), encoding="utf-8")
+        return
+    try:
+        with DATA_PATH.open("r", encoding="utf-8") as f:
+            existing = json.load(f)
+    except json.JSONDecodeError:
+        DATA_PATH.write_text(json.dumps(DEFAULT_DB, ensure_ascii=False, indent=2), encoding="utf-8")
+        return
+    changed = False
+    for key in ["users", "moderators", "logs"]:
+        if key not in existing:
+            existing[key] = DEFAULT_DB.get(key, [] if key != "users" else {})
+            changed = True
+    if changed:
+        DATA_PATH.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+
 
 def load_db() -> Dict[str, Any]:
-    try:
-        with open(DATA_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        db = {
-            "users": {},        # str(tg_id) -> info
-            "moderators": [],   # list of ids
-            "logs": []          # модератор әрекеттері
-        }
-        save_db(db)
-        return db
+    ensure_db_exists()
+    with DATA_PATH.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
 
 def save_db(db: Dict[str, Any]) -> None:
-    with open(DATA_PATH, "w", encoding="utf-8") as f:
+    with DATA_PATH.open("w", encoding="utf-8") as f:
         json.dump(db, f, ensure_ascii=False, indent=2)
 
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
+
 
 def is_moderator(user_id: int, db: Optional[Dict[str, Any]] = None) -> bool:
     if is_admin(user_id):
@@ -109,12 +143,30 @@ def is_moderator(user_id: int, db: Optional[Dict[str, Any]] = None) -> bool:
     return user_id in db.get("moderators", [])
 
 
-def get_user_record(db: Dict[str, Any], tg_id: int, username: Optional[str] = None) -> Dict[str, Any]:
-    key = str(tg_id)
-    user = db["users"].get(key)
-    if not user:
-        user = {
-            "id": tg_id,
+def status_photo(status: str) -> str:
+    return {
+        STATUS_UNKNOWN: PHOTO_UNKNOWN,
+        STATUS_VERIFIED: PHOTO_VERIFIED,
+        STATUS_DOUBTFUL: PHOTO_DOUBTFUL,
+        STATUS_SCAMMER: PHOTO_SCAMMER,
+        STATUS_GUARANTOR: PHOTO_GUARANTOR,
+        STATUS_TEAM: PHOTO_TEAM,
+    }.get(status, PHOTO_UNKNOWN)
+
+
+def status_text(status: str) -> str:
+    return STATUS_DESCRIPTIONS.get(status, STATUS_DESCRIPTIONS[STATUS_UNKNOWN])
+
+
+def status_title(status: str) -> str:
+    return STATUS_TITLES.get(status, STATUS_TITLES[STATUS_UNKNOWN])
+
+
+def get_or_create_user(db: Dict[str, Any], user_id: int, username: Optional[str]) -> Dict[str, Any]:
+    key = str(user_id)
+    if key not in db["users"]:
+        db["users"][key] = {
+            "id": user_id,
             "username": username,
             "status": STATUS_UNKNOWN,
             "proof": None,
@@ -122,137 +174,46 @@ def get_user_record(db: Dict[str, Any], tg_id: int, username: Optional[str] = No
             "updated_by": None,
             "updated_at": None,
         }
-        db["users"][key] = user
     else:
-        # username жаңарту
-        if username and user.get("username") != username:
-            user["username"] = username
-    return user
+        if username and db["users"][key].get("username") != username:
+            db["users"][key]["username"] = username
+    return db["users"][key]
 
 
-def find_user_by_query(db: Dict[str, Any], query: str) -> Optional[Dict[str, Any]]:
+def find_user(db: Dict[str, Any], query: str) -> Optional[Dict[str, Any]]:
     q = query.strip()
     if not q:
         return None
-
-    # ID арқылы (id123456 немесе жай 123456)
     if q.startswith("id") and q[2:].isdigit():
-        tg_id = int(q[2:])
-        return db["users"].get(str(tg_id))
-
+        return db["users"].get(q[2:])
     if q.isdigit():
         return db["users"].get(q)
-
-    # @username арқылы
-    if q.startswith("@"):
-        uname = q[1:].lower()
-    else:
-        uname = q.lower()
-
-    for u in db["users"].values():
-        if u.get("username") and u["username"].lower() == uname:
-            return u
-
-    # Базада жоқ болса None -> неизвестный
+    uname = q[1:] if q.startswith("@") else q
+    uname = uname.lower()
+    for user in db["users"].values():
+        if user.get("username") and user["username"].lower() == uname:
+            return user
     return None
 
 
-def log_action(
-    moderator_id: int,
-    target_id: int,
-    old_status: str,
-    new_status: str,
-    proof: Optional[str],
-    comment: Optional[str],
-) -> Dict[str, Any]:
-    db = load_db()
-    entry = {
-        "time": datetime.utcnow().isoformat(),
-        "moderator_id": moderator_id,
-        "target_id": target_id,
-        "old_status": old_status,
-        "new_status": new_status,
-        "proof": proof,
-        "comment": comment,
-    }
-    db.setdefault("logs", []).append(entry)
-    save_db(db)
-    return entry
+def add_log(db: Dict[str, Any], moderator_id: int, target_id: int, old_status: str, new_status: str, proof: Optional[str], comment: Optional[str]) -> None:
+    db.setdefault("logs", []).append(
+        {
+            "time": datetime.utcnow().isoformat(timespec="seconds"),
+            "moderator_id": moderator_id,
+            "target_id": target_id,
+            "old_status": old_status,
+            "new_status": new_status,
+            "proof": proof,
+            "comment": comment,
+        }
+    )
 
 
-# =========================
-# TEXТТЕР / КӨРІНІС
-# =========================
-
-def build_status_caption(user: Dict[str, Any]) -> str:
-    username = user.get("username")
-    tg_id = user.get("id")
-    status = user.get("status", STATUS_UNKNOWN)
-    proof = user.get("proof")
-    title = STATUS_TITLES.get(status, STATUS_TITLES[STATUS_UNKNOWN])
-
-    header_line = ""
-    if status == STATUS_SCAMMER:
-        header_line = f"🔴 {username or 'не указан'} | id {tg_id}\n\n"
-    else:
-        header_line = f"🔺 @{username or 'не указан'} | id {tg_id}\n\n"
-
-    body = ""
-    if status == STATUS_UNKNOWN:
-        body = (
-            f"⚪️ Пользователь @{username or 'не указан'} не найден в @ZhorikBase. "
-            "Рекомендуется быть осторожным и использовать услуги проверенных гарантов - /mm."
-        )
-    elif status == STATUS_VERIFIED:
-        body = (
-            "🟢 Пользователь является честным! Мнение основано на его репутации. "
-            "Администрация @ZhorikBase не несёт ответственности за данного пользователя."
-        )
-    elif status == STATUS_DOUBTFUL:
-        body = (
-            "⚠️ Замечен в неадекватном поведении и нарушении норм общения. "
-            "Имеет сомнительную репутацию. Рекомендуется проявлять осторожность."
-        )
-    elif status == STATUS_SCAMMER:
-        body = (
-            "❌ Пользователь замечен в мошенничестве! Найден в базе @ZhorikBase. "
-            "Ни в коем случае не взаимодействуйте с данным пользователем.❗️"
-        )
-    elif status == STATUS_GUARANTOR:
-        body = (
-            "🛡 Гарант от @ZhorikBase. Пользователь подтверждён как надёжный гарант. "
-            "Проверен базой, жалоб не зафиксировано."
-        )
-    elif status == STATUS_TEAM:
-        body = (
-            "💎 Официальный представитель @ZhorikBase. Работает в команде бота. "
-            "Все действия — подлинны."
-        )
-    else:
-        body = "Статус неизвестен."
-
-    proof_text = ""
-    if proof:
-        proof_text = f"\n\nПруфы: {proof}"
-
-    return header_line + body + proof_text + FOOTER
-
-
-def status_photo_id(status: str) -> str:
-    if status == STATUS_SCAMMER:
-        return PHOTO_SCAMMER
-    if status == STATUS_VERIFIED:
-        return PHOTO_VERIFIED
-    if status == STATUS_DOUBTFUL:
-        return PHOTO_DOUBTFUL
-    if status == STATUS_GUARANTOR:
-        return PHOTO_GUARANTOR
-    if status == STATUS_TEAM:
-        return PHOTO_TEAM
-    return PHOTO_UNKNOWN
-
-
-def main_menu_kb() -> InlineKeyboardMarkup:
+# =========================================
+# UI HELPERS
+# =========================================
+def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Поиск", callback_data="menu_search")],
@@ -263,507 +224,412 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     )
 
 
-def subscribe_kb() -> InlineKeyboardMarkup:
-    rows = []
-    for ch in REQUIRED_CHANNELS:
-        rows.append([InlineKeyboardButton(text=f"Подписаться на {ch}", url=f"https://t.me/{ch.lstrip('@')}")])
-    rows.append([InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+def subscription_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="Подписаться на канал", url="https://t.me/ZhorikBase")],
+        [InlineKeyboardButton(text="Подписаться на пруфы", url="https://t.me/ZhorikBaseProofs")],
+        [InlineKeyboardButton(text="Проверить", callback_data="check_sub")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-# =========================
-# FSM
-# =========================
-
-class SearchStates(StatesGroup):
-    waiting_query = State()
-
-
-# =========================
-# BOT INIT
-# =========================
-
-bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-dp = Dispatcher()
-router = Router()
-dp.include_router(router)
+def profile_text(user: Dict[str, Any]) -> str:
+    username = user.get("username") or "unknown"
+    header = f"🔺 @{username} | id {user['id']}"
+    body = f"{status_title(user['status'])}\n{status_text(user['status'])}"
+    proof = f"\nПруф: {user['proof']}" if user.get("proof") else ""
+    comment = f"\nКомментарий: {user['comment']}" if user.get("comment") else ""
+    return header + "\n\n" + body + proof + comment + FOOTER
 
 
-# =========================
-# SUB CHECK
-# =========================
+def status_line(user: Dict[str, Any]) -> str:
+    username = user.get("username") or "unknown"
+    parts = [
+        f"🔺 @{username} | id {user['id']}",
+        f"{status_title(user['status'])}",
+        f"{status_text(user['status'])}",
+    ]
+    if user.get("proof"):
+        parts.append(f"Пруф: {user['proof']}")
+    if user.get("comment"):
+        parts.append(f"Комментарий: {user['comment']}")
+    return "\n".join(parts) + FOOTER
 
-async def check_subscription(user_id: int) -> bool:
-    if not REQUIRED_CHANNELS:
-        return True
-    for ch in REQUIRED_CHANNELS:
+
+# =========================================
+# SUBSCRIPTION CHECK
+# =========================================
+async def has_subscription(bot: Bot, user_id: int) -> bool:
+    for channel in REQUIRED_CHANNELS:
         try:
-            m = await bot.get_chat_member(chat_id=ch, user_id=user_id)
-            if m.status in ("member", "administrator", "creator"):
-                continue
+            member = await bot.get_chat_member(channel, user_id)
+            if member.status in {ChatMemberStatus.LEFT, ChatMemberStatus.KICKED}:
+                return False
+        except TelegramBadRequest:
             return False
         except Exception:
-            # канал жабық болса — тексермейміз
-            return True
+            return False
     return True
 
 
-async def ensure_subscribed(message: Message) -> bool:
-    ok = await check_subscription(message.from_user.id)
-    if ok:
-        return True
-    await message.answer(
-        "Перед использованием бота подпишитесь на наши каналы:",
-        reply_markup=subscribe_kb(),
-    )
-    return False
+async def ensure_subscription_for_message(message: Message, bot: Bot) -> bool:
+    ok = await has_subscription(bot, message.from_user.id)
+    if not ok:
+        await message.answer(
+            "Для работы с ботом необходимо подписаться на все обязательные каналы.",
+            reply_markup=subscription_keyboard(),
+        )
+    return ok
 
 
-# =========================
-# HANDLERS
-# =========================
+async def ensure_subscription_for_callback(callback: CallbackQuery, bot: Bot) -> bool:
+    ok = await has_subscription(bot, callback.from_user.id)
+    if not ok:
+        await callback.message.answer(
+            "Подпишитесь на обязательные каналы, затем нажмите \"Проверить\".",
+            reply_markup=subscription_keyboard(),
+        )
+        await callback.answer()
+    return ok
 
+
+# =========================================
+# COMMAND HANDLERS
+# =========================================
 @router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext):
-    if not await ensure_subscribed(message):
+async def cmd_start(message: Message) -> None:
+    bot = message.bot
+    if not await ensure_subscription_for_message(message, bot):
         return
-    await state.clear()
-    await message.answer_photo(
-        photo=PHOTO_UNKNOWN,
-        caption="👋 Привет! Я анти-скам бот ZhorikBase.\nИспользуйте меню ниже для проверки пользователей.",
-        reply_markup=main_menu_kb(),
+    caption = (
+        "Добро пожаловать в ZhorikBase.\n"
+        "База статусов пользователей: команда, гаранты, проверенные и мошенники.\n"
+        "Используйте меню ниже для работы."
     )
-
-
-@router.callback_query(F.data == "check_sub")
-async def cb_check_sub(call: CallbackQuery):
-    ok = await check_subscription(call.from_user.id)
-    if ok:
-        await call.message.edit_text("✅ Подписка успешно проверена! Можете пользоваться ботом.", reply_markup=main_menu_kb())
-    else:
-        await call.answer("Подписка ещё не оформлена.", show_alert=True)
-
-
-@router.callback_query(F.data == "menu_help")
-async def cb_help(call: CallbackQuery):
-    text = (
-        "📌 Основные команды:\n"
-        "/search — 🔍 Найти пользователя\n"
-        "/me — 📊 Проверить свой статус\n"
-        "/help — ❓ Показать это меню\n"
-        "/info — ⚙️ Показать меню статусов\n\n"
-        "🔍 Способы поиска:\n"
-        "• По ID — <code>id123456789</code>\n"
-        "• По нику — <code>@username</code>\n\n"
-        "✅ В группах доступно: /check (по реплаю)\n"
-    )
-    await call.message.edit_text(text, reply_markup=main_menu_kb())
+    await message.answer_photo(photo=PHOTO_START, caption=caption, reply_markup=main_menu())
 
 
 @router.message(Command("help"))
-async def cmd_help(message: Message):
-    if not await ensure_subscribed(message):
-        return
-    await cb_help(CallbackQuery(message=message, from_user=message.from_user, id="0", chat_instance="0", data="menu_help"))
-
-
-@router.callback_query(F.data == "menu_profile")
-async def cb_profile(call: CallbackQuery):
-    db = load_db()
-    u = get_user_record(db, call.from_user.id, call.from_user.username)
-    save_db(db)
-    caption = build_status_caption(u)
-    await call.message.edit_media(
-        media={"type": "photo", "media": status_photo_id(u["status"]), "caption": caption},
-        reply_markup=main_menu_kb()
-    )
-
-
-@router.message(Command("me"))
-async def cmd_me(message: Message):
-    if not await ensure_subscribed(message):
-        return
-    db = load_db()
-    u = get_user_record(db, message.from_user.id, message.from_user.username)
-    save_db(db)
-    await message.answer_photo(
-        photo=status_photo_id(u["status"]),
-        caption=build_status_caption(u),
-    )
-
-
-@router.callback_query(F.data == "menu_search")
-async def cb_search(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SearchStates.waiting_query)
-    await call.message.edit_text("✏️ Введите @username или id123456789 для поиска пользователя:", reply_markup=main_menu_kb())
-
-
-@router.message(SearchStates.waiting_query)
-async def process_search_query(message: Message, state: FSMContext):
-    if not await ensure_subscribed(message):
-        return
-    db = load_db()
-    user = find_user_by_query(db, message.text.strip())
-    if user is None:
-        # неизвестный
-        # query-ден username/id аламыз
-        txt = message.text.strip()
-        username = None
-        tg_id = None
-        if txt.startswith("@"):
-            username = txt[1:]
-        elif txt.startswith("id") and txt[2:].isdigit():
-            tg_id = int(txt[2:])
-        elif txt.isdigit():
-            tg_id = int(txt)
-
-        user = {
-            "id": tg_id or 0,
-            "username": username or "не указан",
-            "status": STATUS_UNKNOWN,
-            "proof": None,
-        }
-
-    await message.answer_photo(
-        photo=status_photo_id(user["status"]),
-        caption=build_status_caption(user),
-    )
-    await state.clear()
-
-
-@router.message(Command("search"))
-async def cmd_search(message: Message, state: FSMContext):
-    if not await ensure_subscribed(message):
-        return
-    args = message.text.split(maxsplit=1)
-    if len(args) == 1:
-        await state.set_state(SearchStates.waiting_query)
-        await message.answer("✏️ Отправьте @username или id123456789:")
-        return
-    db = load_db()
-    user = find_user_by_query(db, args[1])
-    if user is None:
-        txt = args[1].strip()
-        username = None
-        tg_id = None
-        if txt.startswith("@"):
-            username = txt[1:]
-        elif txt.startswith("id") and txt[2:].isdigit():
-            tg_id = int(txt[2:])
-        elif txt.isdigit():
-            tg_id = int(txt)
-
-        user = {
-            "id": tg_id or 0,
-            "username": username or "не указан",
-            "status": STATUS_UNKNOWN,
-            "proof": None,
-        }
-    await message.answer_photo(
-        photo=status_photo_id(user["status"]),
-        caption=build_status_caption(user),
-    )
-    await state.clear()
-
-
-@router.message(Command("info"))
-async def cmd_info(message: Message):
-    if not await ensure_subscribed(message):
+async def cmd_help(message: Message) -> None:
+    if not await ensure_subscription_for_message(message, message.bot):
         return
     text = (
-        "Вот список возможных статусов пользователей в @ZhorikBase:\n\n"
-        "1. ⚙️ Команда бота — Официальный представитель, работает в команде.\n"
-        "2. 🛡 Гарант антискам-базы — Надёжный гарант, жалоб нет.\n"
-        "3. 🟢 Проверенный пользователь — Репутация положительная.\n"
-        "4. ❓ Неизвестный пользователь — Нет данных, будьте осторожны.\n"
-        "5. 🟠 Пользователь сомнителен — Замечен в нарушениях.\n"
-        "6. 🔴 Мошенник — Подтверждённые жалобы, нельзя доверять.\n"
+        "Доступные команды:\n"
+        "/start — запуск и меню\n"
+        "/help — помощь\n"
+        "/info — список статусов\n"
+        "/me — ваш профиль\n"
+        "/search <запрос> — поиск по id/username\n"
+        "/check — ответом на сообщение в чате покажет статус\n"
+        "/admin — панель администратора\n"
+        "/addmod <id> — добавить модератора\n"
+        "/delmod <id> — удалить модератора\n"
+        "/listmods — список модераторов\n"
+        "/setstatus @user статус [пруф] [комментарий] — изменить статус"
     )
     await message.answer(text)
 
 
-# =========================
-# GROUP /check
-# =========================
+@router.message(Command("info"))
+async def cmd_info(message: Message) -> None:
+    if not await ensure_subscription_for_message(message, message.bot):
+        return
+    lines = [f"{code}: {title}" for code, title in STATUS_TITLES.items()]
+    await message.answer("Статусы:\n" + "\n".join(lines))
+
+
+@router.message(Command("me"))
+async def cmd_me(message: Message) -> None:
+    bot = message.bot
+    if not await ensure_subscription_for_message(message, bot):
+        return
+    db = load_db()
+    user = get_or_create_user(db, message.from_user.id, message.from_user.username)
+    save_db(db)
+    await message.answer_photo(photo=status_photo(user["status"]), caption=profile_text(user))
+
+
+@router.message(Command("search"))
+async def cmd_search(message: Message, command: CommandObject) -> None:
+    if not await ensure_subscription_for_message(message, message.bot):
+        return
+    query = (command.args or "").strip()
+    if not query:
+        await message.answer("Укажите запрос: /search <id|username|@username|id123>")
+        return
+    db = load_db()
+    found = find_user(db, query)
+    if not found:
+        found = {
+            "id": query.lstrip("@"),
+            "username": query.lstrip("@"),
+            "status": STATUS_UNKNOWN,
+            "proof": None,
+            "comment": None,
+        }
+    await message.answer(status_line(found))
+
 
 @router.message(Command("check"))
-async def cmd_check(message: Message):
-    if message.chat.type == "private":
-        await message.answer("Эта команда работает только в группах (по реплаю).")
+async def cmd_check(message: Message) -> None:
+    bot = message.bot
+    if not await ensure_subscription_for_message(message, bot):
         return
-    if not message.reply_to_message:
-        await message.answer("Сделайте /check ответом на сообщение пользователя, которого хотите проверить.")
+    if not message.reply_to_message or not message.reply_to_message.from_user:
+        await message.answer("Команда работает только в ответ на сообщение пользователя.")
         return
-
-    db = load_db()
     target = message.reply_to_message.from_user
-    user = get_user_record(db, target.id, target.username)
-    save_db(db)
-    await message.answer_photo(
-        photo=status_photo_id(user["status"]),
-        caption=build_status_caption(user),
-    )
-
-
-# =========================
-# INLINE MODE
-# =========================
-
-@router.inline_query()
-async def inline_search(inline_query: InlineQuery):
-    query = inline_query.query.strip()
     db = load_db()
-    if not query:
-        content = InputTextMessageContent(
-            "Введите @username или id123456789, чтобы проверить пользователя в @ZhorikBase."
-        )
+    user = get_or_create_user(db, target.id, target.username)
+    save_db(db)
+    await message.answer(status_line(user))
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message) -> None:
+    bot = message.bot
+    if not await ensure_subscription_for_message(message, bot):
+        return
+    if not is_admin(message.from_user.id):
+        await message.answer("Недостаточно прав для доступа к админ-панели.")
+        return
+    db = load_db()
+    stats: Dict[str, int] = {code: 0 for code in STATUS_TITLES.keys()}
+    for user in db.get("users", {}).values():
+        stats[user.get("status", STATUS_UNKNOWN)] = stats.get(user.get("status", STATUS_UNKNOWN), 0) + 1
+    stat_lines = [f"{status_title(code)}: {count}" for code, count in stats.items()]
+    info_lines = [
+        "Админ-панель:",
+        *stat_lines,
+        f"Модераторов: {len(db.get('moderators', []))}",
+        "Команды: /addmod /delmod /listmods /setstatus",
+    ]
+    await message.answer("\n".join(info_lines))
+
+
+@router.message(Command("addmod"))
+async def cmd_addmod(message: Message, command: CommandObject) -> None:
+    if not await ensure_subscription_for_message(message, message.bot):
+        return
+    if not is_admin(message.from_user.id):
+        await message.answer("Только администратор может добавлять модераторов.")
+        return
+    args = (command.args or "").strip()
+    if not args.isdigit():
+        await message.answer("Использование: /addmod <user_id>")
+        return
+    mod_id = int(args)
+    db = load_db()
+    if mod_id in db.get("moderators", []):
+        await message.answer("Пользователь уже модератор.")
+        return
+    db.setdefault("moderators", []).append(mod_id)
+    save_db(db)
+    await message.answer(f"Модератор {mod_id} добавлен.")
+
+
+@router.message(Command("delmod"))
+async def cmd_delmod(message: Message, command: CommandObject) -> None:
+    if not await ensure_subscription_for_message(message, message.bot):
+        return
+    if not is_admin(message.from_user.id):
+        await message.answer("Только администратор может удалять модераторов.")
+        return
+    args = (command.args or "").strip()
+    if not args.isdigit():
+        await message.answer("Использование: /delmod <user_id>")
+        return
+    mod_id = int(args)
+    db = load_db()
+    if mod_id not in db.get("moderators", []):
+        await message.answer("Пользователь не является модератором.")
+        return
+    db["moderators"] = [m for m in db.get("moderators", []) if m != mod_id]
+    save_db(db)
+    await message.answer(f"Модератор {mod_id} удалён.")
+
+
+@router.message(Command("listmods"))
+async def cmd_listmods(message: Message) -> None:
+    if not await ensure_subscription_for_message(message, message.bot):
+        return
+    if not is_admin(message.from_user.id):
+        await message.answer("Доступно только администраторам.")
+        return
+    db = load_db()
+    mods = db.get("moderators", [])
+    text = "Список модераторов:\n" + "\n".join(str(m) for m in mods) if mods else "Модераторов пока нет."
+    await message.answer(text)
+
+
+@router.message(Command("setstatus"))
+async def cmd_setstatus(message: Message, command: CommandObject) -> None:
+    bot = message.bot
+    if not await ensure_subscription_for_message(message, bot):
+        return
+    db = load_db()
+    if not is_moderator(message.from_user.id, db):
+        await message.answer("Недостаточно прав для изменения статуса.")
+        return
+    args = (command.args or "").strip().split()
+    if len(args) < 2:
+        await message.answer("Использование: /setstatus @user статус [пруф] [комментарий]")
+        return
+    target_raw, new_status, *rest = args
+    if new_status not in STATUS_TITLES:
+        await message.answer("Неизвестный статус. Используйте /info для списка.")
+        return
+    target_user: Optional[Dict[str, Any]] = None
+    target_id: Optional[int] = None
+    if target_raw.isdigit():
+        target_id = int(target_raw)
+        target_user = get_or_create_user(db, target_id, None)
+    else:
+        target_user = find_user(db, target_raw)
+        if target_user:
+            target_id = target_user["id"]
+    if target_user is None or target_id is None:
+        await message.answer("Пользователь не найден. Укажите корректный id или известный username.")
+        return
+    proof = rest[0] if rest else None
+    comment = " ".join(rest[1:]) if len(rest) > 1 else None
+    old_status = target_user.get("status", STATUS_UNKNOWN)
+    target_user.update(
+        {
+            "status": new_status,
+            "proof": proof,
+            "comment": comment,
+            "updated_by": message.from_user.id,
+            "updated_at": datetime.utcnow().isoformat(timespec="seconds"),
+        }
+    )
+    db["users"][str(target_id)] = target_user
+    add_log(db, message.from_user.id, target_id, old_status, new_status, proof, comment)
+    save_db(db)
+    notify_text = (
+        "📢 Действие модератора:\n"
+        f"Модератор: @{message.from_user.username or 'unknown'} ({message.from_user.id})\n"
+        f"Цель: @{target_user.get('username') or 'unknown'} ({target_id})\n"
+        f"Статус: {status_title(old_status)} → {status_title(new_status)}\n"
+        f"Пруф: {proof or '—'}\n"
+        f"Комментарий: {comment or '—'}\n"
+        f"Время: {target_user['updated_at']}"
+    )
+    await message.answer(status_line(target_user))
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, notify_text)
+        except Exception:
+            logging.warning("Не удалось отправить уведомление администратору %s", admin_id)
+
+
+# =========================================
+# INLINE BUTTONS
+# =========================================
+@router.callback_query(F.data == "check_sub")
+async def callback_check_sub(callback: CallbackQuery) -> None:
+    bot = callback.bot
+    if await has_subscription(bot, callback.from_user.id):
+        await callback.message.answer("Подписка подтверждена. Можно продолжать работу.")
+    else:
+        await callback.message.answer("Подписка не найдена. Проверьте, что подписаны на оба канала.")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_search")
+async def callback_menu_search(callback: CallbackQuery) -> None:
+    if not await ensure_subscription_for_callback(callback, callback.bot):
+        return
+    await callback.message.answer("Введите запрос командой /search <id|username> для проверки статуса.")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_profile")
+async def callback_menu_profile(callback: CallbackQuery) -> None:
+    bot = callback.bot
+    if not await ensure_subscription_for_callback(callback, bot):
+        return
+    db = load_db()
+    user = get_or_create_user(db, callback.from_user.id, callback.from_user.username)
+    save_db(db)
+    await callback.message.answer_photo(photo=status_photo(user["status"]), caption=profile_text(user))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_lists")
+async def callback_menu_lists(callback: CallbackQuery) -> None:
+    if not await ensure_subscription_for_callback(callback, callback.bot):
+        return
+    db = load_db()
+    statuses: Dict[str, List[str]] = {code: [] for code in STATUS_TITLES}
+    for user in db.get("users", {}).values():
+        uname = f"@{user.get('username')}" if user.get("username") else str(user.get("id"))
+        statuses[user.get("status", STATUS_UNKNOWN)].append(uname)
+    lines = []
+    for code, users in statuses.items():
+        names = ", ".join(users) if users else "—"
+        lines.append(f"{status_title(code)}: {names}")
+    await callback.message.answer("Списки по статусам:\n" + "\n".join(lines))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_help")
+async def callback_menu_help(callback: CallbackQuery) -> None:
+    if not await ensure_subscription_for_callback(callback, callback.bot):
+        return
+    await callback.message.answer("Используйте /help чтобы увидеть все возможности бота.")
+    await callback.answer()
+
+
+# =========================================
+# INLINE MODE
+# =========================================
+@router.inline_query()
+async def inline_query_handler(inline_query: InlineQuery) -> None:
+    bot = inline_query.bot
+    query = inline_query.query.strip()
+    allowed = await has_subscription(bot, inline_query.from_user.id)
+    if not allowed:
         result = InlineQueryResultArticle(
-            id="empty",
-            title="Поиск пользователя",
-            description="Введите @username или id123456789",
-            input_message_content=content,
+            id="subscribe",
+            title="Подписка обязательна",
+            description="Подпишитесь на каналы для использования бота",
+            input_message_content=InputTextMessageContent(
+                message_text="Подпишитесь на @ZhorikBase и @ZhorikBaseProofs для использования бота."
+            ),
         )
         await inline_query.answer([result], cache_time=1)
         return
-
-    user = find_user_by_query(db, query)
-    if user is None:
-        txt = query
-        username = None
-        tg_id = None
-        if txt.startswith("@"):
-            username = txt[1:]
-        elif txt.startswith("id") and txt[2:].isdigit():
-            tg_id = int(txt[2:])
-        elif txt.isdigit():
-            tg_id = int(txt)
-
+    db = load_db()
+    user = find_user(db, query) if query else get_or_create_user(db, inline_query.from_user.id, inline_query.from_user.username)
+    if not user:
         user = {
-            "id": tg_id or 0,
-            "username": username or "не указан",
+            "id": query or inline_query.from_user.id,
+            "username": query or inline_query.from_user.username,
             "status": STATUS_UNKNOWN,
             "proof": None,
+            "comment": None,
         }
-
-    caption = build_status_caption(user)
-    content = InputTextMessageContent(caption)
     result = InlineQueryResultArticle(
-        id="user",
-        title=f"Статус {user.get('username') or user.get('id')}",
-        description=STATUS_TITLES.get(user["status"], "Неизвестный пользователь"),
-        input_message_content=content,
+        id="status_result",
+        title=status_title(user.get("status", STATUS_UNKNOWN)),
+        description=f"@{user.get('username') or 'unknown'} | {user.get('id')}",
+        input_message_content=InputTextMessageContent(message_text=status_line(user)),
     )
     await inline_query.answer([result], cache_time=1)
 
 
-# =========================
-# ADMIN / MODERATION
-# =========================
-
-@router.message(Command("admin"))
-async def cmd_admin(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    db = load_db()
-    users = db.get("users", {})
-    counts = {s: 0 for s in STATUS_ORDER}
-    for u in users.values():
-        counts[u.get("status", STATUS_UNKNOWN)] = counts.get(u.get("status", STATUS_UNKNOWN), 0) + 1
-
-    text_lines = [
-        "📊 Статистика ZhorikBase:",
-        f"Всего в базе: {len(users)}",
-    ]
-    for s in STATUS_ORDER:
-        text_lines.append(f"{STATUS_TITLES[s]}: {counts.get(s, 0)}")
-    text_lines.append("\nКоманды админа:")
-    text_lines.append("/addmod id — добавить модератора")
-    text_lines.append("/delmod id — убрать модератора")
-    text_lines.append("/listmods — список модераторов")
-    text_lines.append("/setstatus — изменить статус (для модеров тоже)")
-    await message.answer("\n".join(text_lines))
-
-
-@router.message(Command("addmod"))
-async def cmd_addmod(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    args = message.text.split()
-    if len(args) < 2 or not args[1].isdigit():
-        await message.answer("Использование: /addmod 123456789")
-        return
-    mid = int(args[1])
-    db = load_db()
-    if mid not in db["moderators"]:
-        db["moderators"].append(mid)
-        save_db(db)
-    await message.answer(f"✅ Пользователь {mid} добавлен как модератор.")
-
-
-@router.message(Command("delmod"))
-async def cmd_delmod(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    args = message.text.split()
-    if len(args) < 2 or not args[1].isdigit():
-        await message.answer("Использование: /delmod 123456789")
-        return
-    mid = int(args[1])
-    db = load_db()
-    if mid in db["moderators"]:
-        db["moderators"].remove(mid)
-        save_db(db)
-        await message.answer(f"❌ Пользователь {mid} убран из модераторов.")
-    else:
-        await message.answer("Этот пользователь не модератор.")
-
-
-def parse_status_code(text: str) -> Optional[str]:
-    t = text.lower()
-    mapping = {
-        "team": STATUS_TEAM,
-        "команда": STATUS_TEAM,
-        "guarantor": STATUS_GUARANTOR,
-        "гарант": STATUS_GUARANTOR,
-        "verified": STATUS_VERIFIED,
-        "проверенный": STATUS_VERIFIED,
-        "unknown": STATUS_UNKNOWN,
-        "неизвестный": STATUS_UNKNOWN,
-        "doubt": STATUS_DOUBTFUL,
-        "сомнительный": STATUS_DOUBTFUL,
-        "scam": STATUS_SCAMMER,
-        "scammer": STATUS_SCAMMER,
-        "мошенник": STATUS_SCAMMER,
-    }
-    return mapping.get(t)
-
-
-@router.message(Command("setstatus"))
-async def cmd_setstatus(message: Message):
-    db = load_db()
-    if not is_moderator(message.from_user.id, db):
-        return
-
-    # формат:
-    # /setstatus @user статус [пруф] | [комментарий]
-    # минимум: /setstatus @user status
-    args = message.text.split(maxsplit=3)
-    if len(args) < 3:
-        await message.answer("Использование: /setstatus @username статус [пруф] [комментарий]")
-        return
-
-    user_part = args[1]
-    status_part = args[2]
-    extra = args[3] if len(args) > 3 else ""
-
-    status_code = parse_status_code(status_part)
-    if not status_code:
-        await message.answer("Неизвестный статус. Возможные: team, guarantor, verified, unknown, doubt, scam")
-        return
-
-    # цель: по ник/ID
-    target_record = find_user_by_query(db, user_part)
-    if target_record is None:
-        # создаем новый
-        username = None
-        tg_id = None
-        if user_part.startswith("@"):
-            username = user_part[1:]
-        elif user_part.startswith("id") and user_part[2:].isdigit():
-            tg_id = int(user_part[2:])
-        elif user_part.isdigit():
-            tg_id = int(user_part)
-        else:
-            await message.answer("Не удалось разобрать пользователя. Используйте @username или id123.")
-            return
-
-        if tg_id is None:
-            tg_id = 0
-
-        target_record = {
-            "id": tg_id,
-            "username": username,
-            "status": STATUS_UNKNOWN,
-            "proof": None,
-            "comment": None,
-            "updated_by": None,
-            "updated_at": None,
-        }
-        db["users"][str(tg_id)] = target_record
-
-    # pruf / comment бөлшектеу - прост: всё extra как комментарий, если там ссылка есть, отправим как proof
-    proof = None
-    comment = None
-    if extra:
-        if "http://" in extra or "https://" in extra or "t.me" in extra:
-            proof = extra
-        else:
-            comment = extra
-
-    old_status = target_record.get("status", STATUS_UNKNOWN)
-    target_record["status"] = status_code
-    if proof:
-        target_record["proof"] = proof
-    if comment:
-        target_record["comment"] = comment
-    target_record["updated_by"] = message.from_user.id
-    target_record["updated_at"] = datetime.utcnow().isoformat()
-
-    save_db(db)
-
-    entry = log_action(
-        moderator_id=message.from_user.id,
-        target_id=target_record["id"],
-        old_status=old_status,
-        new_status=status_code,
-        proof=proof,
-        comment=comment,
-    )
-
-    await message.answer(
-        f"✅ Статус пользователя обновлён: {STATUS_TITLES.get(status_code)}\n"
-        f"ID: {target_record['id']} | @{target_record.get('username')}"
-    )
-
-    # уведомление админам
-    text = (
-        "📢 Действие модератора:\n"
-        f"Модератор: <code>{message.from_user.id}</code> (@{message.from_user.username})\n"
-        f"Цель: <code>{target_record['id']}</code> (@{target_record.get('username')})\n"
-        f"Статус: {STATUS_TITLES.get(old_status)} → {STATUS_TITLES.get(status_code)}\n"
-    )
-    if proof:
-        text += f"Пруф: {proof}\n"
-    if comment:
-        text += f"Комментарий: {comment}\n"
-    text += f"Время: {entry['time']}"
-
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, text)
-        except Exception:
-            pass
-
-
-@router.message(Command("listmods"))
-async def cmd_listmods(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    db = load_db()
-    mods = db.get("moderators", [])
-    if not mods:
-        await message.answer("Модераторов пока нет.")
-        return
-    text = "Список модераторов:\n" + "\n".join([str(m) for m in mods])
-    await message.answer(text)
-
-
-# =========================
-# ENTRYPOINT
-# =========================
-
-async def main():
+# =========================================
+# APPLICATION STARTUP
+# =========================================
+async def main() -> None:
+    ensure_db_exists()
+    bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp = Dispatcher()
+    dp.include_router(router)
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
