@@ -12,6 +12,7 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🆕 Добавить статус", callback_data="admin_addstatus")],
             [InlineKeyboardButton(text="✏️ Редактировать статус", callback_data="admin_editstatus")],
             [InlineKeyboardButton(text="🗑 Удалить статус", callback_data="admin_delstatus")],
+            [InlineKeyboardButton(text="⚙️ Изменить статус пользователя", callback_data="admin_setstatus")],
             [InlineKeyboardButton(text="📒 Логи", callback_data="admin_logs")],
         ]
     )

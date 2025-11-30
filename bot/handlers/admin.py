@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
@@ -42,10 +42,72 @@ def is_moderator(user_id: int) -> bool:
     return user_id in get_moderators() or is_admin(user_id)
 
 
-def notify_admins(message: Message, text: str) -> None:
+def notify_admins(message: Message, *parts: str) -> None:
+    text = "".join(parts)
     targets = set(get_admins()) | set(ADMIN_IDS)
     for admin_id in targets:
         asyncio.create_task(message.bot.send_message(admin_id, text))
+
+
+def apply_status_change(
+    actor_id: int,
+    message: Message,
+    target_raw: str,
+    status_code: str,
+    proof: str,
+    comment: str,
+    reply_user_id: Optional[int],
+    reply_username: Optional[str],
+) -> Tuple[Optional[Dict[str, object]], Optional[str]]:
+    parsed = parse_search_query(target_raw) or target_raw
+    _, existing_user = resolve_user(parsed)
+    status_map = get_statuses()
+    if status_code not in status_map:
+        return None, "Неизвестная категория статуса. Добавьте её через /addstatus."
+
+    user_id = None
+    if existing_user:
+        user_id = int(existing_user.get("id"))
+    elif target_raw.isdigit():
+        user_id = int(target_raw)
+    elif target_raw.lower().startswith("id") and target_raw[2:].isdigit():
+        user_id = int(target_raw[2:])
+    elif reply_user_id:
+        user_id = reply_user_id
+    if not user_id:
+        return None, "Не удалось определить ID пользователя."
+
+    username = existing_user.get("username") if existing_user else None
+    if reply_username:
+        username = reply_username or username
+    update_result = upsert_user(
+        user_id=user_id,
+        username=username,
+        status=status_code,
+        proof=proof,
+        comment=comment,
+        updated_by=actor_id,
+    )
+    log_entry = build_log(
+        moderator_id=actor_id,
+        target_id=user_id,
+        old_status=update_result["old_status"],
+        new_status=status_code,
+        proof=proof,
+        comment=comment,
+    )
+    save_log(log_entry)
+    notify_admins(
+        message,
+        "📢 Действие модератора:\n",
+        f"Модератор: @{message.from_user.username} ({message.from_user.id})\n",
+        f"Цель: @{username or 'unknown'} ({user_id})\n",
+        f"Статус: {update_result['old_status']} → {status_code}\n",
+        f"Пруф: {proof or '—'}\n",
+        f"Комментарий: {comment or '—'}\n",
+        f"Время: {log_entry['time']}",
+    )
+    return update_result["user"], None
 
 
 def build_admin_panel_text() -> str:
@@ -63,6 +125,7 @@ def build_admin_panel_text() -> str:
         "• 📊 Обновить панель\n"
         "• 👥 Модераторы: добавить/удалить/список\n"
         "• 🛡 Статус-категории: добавить/изменить/удалить\n"
+        "• ⚙️ Изменить статус пользователя\n"
         "• 🧾 Логи: просмотр последних записей\n\n"
         "Команды больше не требуются — все действия доступны в инлайн-панели."
     )
@@ -157,6 +220,32 @@ async def handle_pending_actions(message: Message) -> None:
             await message.answer("Статус удален.")
         else:
             await message.answer("Нельзя удалить статус: либо не найден, либо есть пользователи в этой категории.")
+        return
+
+    if action == "setstatus":
+        if len(text.split()) < 2:
+            await message.answer("Формат: target status [proof] [comment]")
+            return
+        parts = text.split()
+        target_raw = parts[0]
+        status_code = parts[1]
+        proof = parts[2] if len(parts) > 2 else ""
+        comment = " ".join(parts[3:]) if len(parts) > 3 else ""
+        user, error = apply_status_change(
+            actor_id=message.from_user.id,
+            message=message,
+            target_raw=target_raw,
+            status_code=status_code,
+            proof=proof,
+            comment=comment,
+            reply_user_id=None,
+            reply_username=None,
+        )
+        if error:
+            await message.answer(error)
+            return
+        pop_pending(message.from_user.id)
+        await message.answer(format_status_text(user, target_raw))
         return
 
 
@@ -441,6 +530,22 @@ async def handle_admin_delstatus_prompt(call: CallbackQuery) -> None:
     await call.message.answer("Введите код статуса для удаления.")
 
 
+@router.callback_query(F.data == "admin_setstatus")
+async def handle_admin_setstatus_prompt(call: CallbackQuery) -> None:
+    subscribed, _ = await ensure_subscription(call.bot, call.from_user)
+    if not subscribed:
+        await call.message.answer(
+            "Для работы бота необходима подписка на каналы.",
+            reply_markup=subscription_keyboard(),
+        )
+        return
+    if not is_moderator(call.from_user.id):
+        await call.message.answer("Команда доступна модераторам и админам.")
+        return
+    set_pending(call.from_user.id, "setstatus")
+    await call.message.answer("Введите: target status [proof] [comment]")
+
+
 @router.message(Command("setstatus"))
 async def handle_setstatus(message: Message, command: CommandObject) -> None:
     if not is_moderator(message.from_user.id):
@@ -461,48 +566,20 @@ async def handle_setstatus(message: Message, command: CommandObject) -> None:
     status_code = args[1]
     proof = args[2] if len(args) > 2 else ""
     comment = " ".join(args[3:]) if len(args) > 3 else ""
-    parsed = parse_search_query(target_raw) or target_raw
-    target_id, existing_user = resolve_user(parsed)
-    status_map = get_statuses()
-    if status_code not in status_map:
-        await message.answer("Неизвестная категория статуса. Добавьте её через /addstatus.")
-        return
-    user_id = None
-    if existing_user:
-        user_id = int(existing_user.get("id"))
-    elif target_raw.isdigit():
-        user_id = int(target_raw)
-    elif target_raw.lower().startswith("id") and target_raw[2:].isdigit():
-        user_id = int(target_raw[2:])
-    elif message.reply_to_message and message.reply_to_message.from_user:
-        user_id = message.reply_to_message.from_user.id
-    if not user_id:
-        await message.answer("Не удалось определить ID пользователя.")
-        return
-    username = existing_user.get("username") if existing_user else None
-    if message.reply_to_message and message.reply_to_message.from_user:
-        username = message.reply_to_message.from_user.username or username
-    update_result = upsert_user(user_id=user_id, username=username, status=status_code, proof=proof, comment=comment, updated_by=message.from_user.id)
-    log_entry = build_log(
-        moderator_id=message.from_user.id,
-        target_id=user_id,
-        old_status=update_result["old_status"],
-        new_status=status_code,
+    user, error = apply_status_change(
+        actor_id=message.from_user.id,
+        message=message,
+        target_raw=target_raw,
+        status_code=status_code,
         proof=proof,
         comment=comment,
+        reply_user_id=message.reply_to_message.from_user.id if message.reply_to_message and message.reply_to_message.from_user else None,
+        reply_username=message.reply_to_message.from_user.username if message.reply_to_message and message.reply_to_message.from_user else None,
     )
-    save_log(log_entry)
-    await message.answer(format_status_text(update_result["user"], target_raw))
-    notify_admins(
-        message,
-        "📢 Действие модератора:\n"
-        f"Модератор: @{message.from_user.username} ({message.from_user.id})\n"
-        f"Цель: @{username or 'unknown'} ({user_id})\n"
-        f"Статус: {update_result['old_status']} → {status_code}\n"
-        f"Пруф: {proof or '—'}\n"
-        f"Комментарий: {comment or '—'}\n"
-        f"Время: {log_entry['time']}",
-    )
+    if error:
+        await message.answer(error)
+        return
+    await message.answer(format_status_text(user, target_raw))
 
 
 @router.message(Command("logs"))

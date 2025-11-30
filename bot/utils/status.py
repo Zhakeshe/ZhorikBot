@@ -64,5 +64,6 @@ def format_status_text(user: Optional[Dict[str, object]], query: str) -> str:
         f"{status_line}\n"
         f"{status_description(status_code)}\n\n"
         f"Пруф: {proof}\n"
-        f"Комментарий: {comment}"
+        f"Комментарий: {comment}\n\n"
+        f"{FOOTER}"
     )
