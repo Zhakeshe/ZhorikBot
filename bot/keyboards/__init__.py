@@ -1,1 +1,1 @@
-__all__ = ["main_menu", "subscription", "lists_menu"]
+__all__ = ["main_menu", "subscription", "lists_menu", "admin_panel"]
