@@ -2,7 +2,7 @@ import asyncio
 import os
 from typing import Dict, List, Optional, Tuple
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
@@ -49,8 +49,9 @@ def notify_admins(message: Message, *parts: str) -> None:
         asyncio.create_task(message.bot.send_message(admin_id, text))
 
 
-def apply_status_change(
+async def apply_status_change(
     actor_id: int,
+    bot: Bot,
     message: Message,
     target_raw: str,
     status_code: str,
@@ -60,26 +61,48 @@ def apply_status_change(
     reply_username: Optional[str],
 ) -> Tuple[Optional[Dict[str, object]], Optional[str]]:
     parsed = parse_search_query(target_raw) or target_raw
-    _, existing_user = resolve_user(parsed)
+    normalized, existing_user = resolve_user(parsed)
     status_map = get_statuses()
     if status_code not in status_map:
         return None, "Неизвестная категория статуса. Добавьте её через /addstatus."
 
-    user_id = None
+    user_id: Optional[int] = None
+    username: Optional[str] = existing_user.get("username") if existing_user else None
+
     if existing_user:
         user_id = int(existing_user.get("id"))
-    elif target_raw.isdigit():
-        user_id = int(target_raw)
-    elif target_raw.lower().startswith("id") and target_raw[2:].isdigit():
-        user_id = int(target_raw[2:])
     elif reply_user_id:
         user_id = reply_user_id
+
+    if reply_username:
+        username = reply_username or username
+
+    if not user_id:
+        if target_raw.isdigit():
+            user_id = int(target_raw)
+        elif target_raw.lower().startswith("id") and target_raw[2:].isdigit():
+            user_id = int(target_raw[2:])
+        elif normalized.isdigit():
+            user_id = int(normalized)
+
+    if not username:
+        if target_raw.startswith("@"):
+            username = target_raw[1:]
+        elif not normalized.isdigit():
+            username = normalized
+
+    if not user_id and username:
+        try:
+            chat = await bot.get_chat(username if username.startswith("@") else f"@{username}")
+            user_id = chat.id if hasattr(chat, "id") else None
+            if getattr(chat, "username", None):
+                username = chat.username
+        except Exception:
+            pass
+
     if not user_id:
         return None, "Не удалось определить ID пользователя."
 
-    username = existing_user.get("username") if existing_user else None
-    if reply_username:
-        username = reply_username or username
     update_result = upsert_user(
         user_id=user_id,
         username=username,
@@ -140,6 +163,10 @@ def set_pending(user_id: int, action: str) -> None:
 
 def pop_pending(user_id: int) -> str | None:
     return PENDING_ACTIONS.pop(user_id, None)
+
+
+def has_pending_action(user_id: int) -> bool:
+    return user_id in PENDING_ACTIONS
 
 
 @router.message(F.text, lambda message: message.from_user and message.from_user.id in PENDING_ACTIONS)
@@ -231,8 +258,9 @@ async def handle_pending_actions(message: Message) -> None:
         status_code = parts[1]
         proof = parts[2] if len(parts) > 2 else ""
         comment = " ".join(parts[3:]) if len(parts) > 3 else ""
-        user, error = apply_status_change(
+        user, error = await apply_status_change(
             actor_id=message.from_user.id,
+            bot=message.bot,
             message=message,
             target_raw=target_raw,
             status_code=status_code,
@@ -566,8 +594,9 @@ async def handle_setstatus(message: Message, command: CommandObject) -> None:
     status_code = args[1]
     proof = args[2] if len(args) > 2 else ""
     comment = " ".join(args[3:]) if len(args) > 3 else ""
-    user, error = apply_status_change(
+    user, error = await apply_status_change(
         actor_id=message.from_user.id,
+        bot=message.bot,
         message=message,
         target_raw=target_raw,
         status_code=status_code,

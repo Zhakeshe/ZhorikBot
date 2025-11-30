@@ -6,6 +6,7 @@ from bot.keyboards.subscription import subscription_keyboard
 from bot.utils.checks import ensure_subscription, parse_search_query
 from bot.utils.db import resolve_user
 from bot.utils.status import format_status_text, status_photo
+from bot.handlers.admin import has_pending_action
 
 router = Router()
 
@@ -35,6 +36,8 @@ async def handle_search(message: Message, command: CommandObject) -> None:
 # Non-blocking free-text handler so command messages continue to other routers
 @router.message(F.text, flags={"block": False})
 async def handle_free_text(message: Message) -> None:
+    if message.from_user and has_pending_action(message.from_user.id):
+        return
     if message.text and message.text.startswith("/"):
         return
     query = parse_search_query(message.text or "")

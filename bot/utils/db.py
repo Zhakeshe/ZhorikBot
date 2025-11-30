@@ -274,14 +274,24 @@ def ensure_status_exists(code: str) -> bool:
 
 
 def resolve_user(query: str) -> Tuple[str, Optional[Dict[str, object]]]:
-    if query.startswith("@"):  # username
-        username = query[1:]
+    cleaned = query.strip()
+
+    # Username with @ prefix
+    if cleaned.startswith("@"):  # username
+        username = cleaned[1:]
         user = get_user(username)
         return (username, user)
-    cleaned = query
-    if query.lower().startswith("id"):
-        cleaned = query[2:]
+
+    # Raw ID formats: id123 or 123
+    if cleaned.lower().startswith("id") and cleaned[2:].isdigit():
+        normalized = cleaned[2:]
+        user = get_user(normalized)
+        return (normalized, user)
+
     if cleaned.isdigit():
         user = get_user(cleaned)
         return (cleaned, user)
-    return (query, None)
+
+    # Treat everything else as a username without @
+    user = get_user(cleaned)
+    return (cleaned, user)
