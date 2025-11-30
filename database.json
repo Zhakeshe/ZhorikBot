@@ -1,5 +1,40 @@
 {
   "users": {},
+  "admins": [
+    123
+  ],
   "moderators": [],
-  "logs": []
+  "logs": [],
+  "statuses": {
+    "team": {
+      "title": "⚙ Команда бота",
+      "description": "Участник команды ZhorikBase.",
+      "photo": "https://i.imgur.com/Qz9s5rM.png"
+    },
+    "guarantor": {
+      "title": "🛡 Гарант",
+      "description": "Рекомендованный гарант.",
+      "photo": "https://i.imgur.com/ev7tnBe.png"
+    },
+    "verified": {
+      "title": "🟢 Проверенный",
+      "description": "Пользователь с подтвержденной репутацией.",
+      "photo": "https://i.imgur.com/6p3ibEd.png"
+    },
+    "unknown": {
+      "title": "❓ Неизвестный",
+      "description": "Нет данных — будьте осторожны.",
+      "photo": "https://i.imgur.com/4rKBePk.png"
+    },
+    "doubtful": {
+      "title": "🟠 Сомнительный",
+      "description": "Есть сомнения в надежности.",
+      "photo": "https://i.imgur.com/VfU8XDW.png"
+    },
+    "scammer": {
+      "title": "🔴 Мошенник",
+      "description": "Зафиксированы жалобы на мошенничество.",
+      "photo": "https://i.imgur.com/5t49PxD.png"
+    }
+  }
 }
