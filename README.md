@@ -15,10 +15,13 @@
    ```bash
    pip install -r requirements.txt
    ```
-4. `main.py` ішіндегі `BOT_TOKEN` жеріне өз Telegram бот токеніңді қой.
-5. `ADMIN_IDS` ішіне өз Telegram ID-ңді жаз.
-6. Фото file_id алу үшін, ботқа сурет жіберіп, Telegram API арқылы немесе логтан алып, `PHOTO_*` айнымалыларын толтыр.
-7. Ботты іске қос:
+4. `.env` файлын жаса немесе `.env.example` ішіндегі мәндерді көшіріп, келесілерді толтыр:
+   ```env
+   BOT_TOKEN=your-telegram-bot-token
+   ADMIN_IDS=123456789,987654321
+   ```
+5. Фото file_id алу үшін, ботқа сурет жіберіп, Telegram API арқылы немесе логтан алып, `PHOTO_*` айнымалыларын толтыр.
+6. Ботты іске қос:
    ```bash
    python main.py
    ```
