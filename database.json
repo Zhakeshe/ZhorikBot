@@ -1,5 +1,8 @@
 {
   "users": {},
+  "admins": [
+    123
+  ],
   "moderators": [],
   "logs": [],
   "statuses": {

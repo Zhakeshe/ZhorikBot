@@ -52,6 +52,7 @@ DEFAULT_DB: Dict[str, object] = {
         }
     },
     "statuses": DEFAULT_STATUSES,
+    "admins": [123],
     "moderators": [123],
     "logs": [
         {
@@ -87,6 +88,9 @@ def ensure_database() -> None:
         if "users" not in data:
             data["users"] = {}
             changed = True
+        if "admins" not in data:
+            data["admins"] = []
+            changed = True
         if "moderators" not in data:
             data["moderators"] = []
             changed = True
@@ -108,6 +112,24 @@ def read_db() -> Dict[str, object]:
 
 def write_db(data: Dict[str, object]) -> None:
     _write_json(DB_PATH, data)
+
+
+def get_admins() -> List[int]:
+    data = read_db()
+    return data.get("admins", [])
+
+
+def seed_admins(admin_ids: List[int]) -> None:
+    data = read_db()
+    admins: List[int] = data.setdefault("admins", [])
+    updated = False
+    for admin_id in admin_ids:
+        if admin_id not in admins:
+            admins.append(admin_id)
+            updated = True
+    if updated:
+        data["admins"] = admins
+        write_db(data)
 
 
 def get_statuses() -> Dict[str, Dict[str, str]]:

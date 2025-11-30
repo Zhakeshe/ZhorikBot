@@ -12,10 +12,12 @@ from bot.utils.checks import ensure_subscription, parse_search_query
 from bot.utils.db import (
     add_moderator,
     delete_status,
+    get_admins,
     get_moderators,
     get_statuses,
     resolve_user,
     save_status,
+    seed_admins,
     stats_by_status,
     update_status,
     upsert_user,
@@ -29,10 +31,11 @@ ADMIN_IDS: List[int] = [123]
 admin_env = os.environ.get("ADMIN_IDS")
 if admin_env:
     ADMIN_IDS = [int(x) for x in admin_env.split(",") if x.strip().isdigit()]
+seed_admins(ADMIN_IDS)
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+    return user_id in set(get_admins()) or user_id in ADMIN_IDS
 
 
 def is_moderator(user_id: int) -> bool:
@@ -40,7 +43,8 @@ def is_moderator(user_id: int) -> bool:
 
 
 def notify_admins(message: Message, text: str) -> None:
-    for admin_id in ADMIN_IDS:
+    targets = set(get_admins()) | set(ADMIN_IDS)
+    for admin_id in targets:
         asyncio.create_task(message.bot.send_message(admin_id, text))
 
 
@@ -49,9 +53,11 @@ def build_admin_panel_text() -> str:
     statuses = get_statuses()
     stats_lines = "\n".join([f"{statuses.get(code, {}).get('title', code)}: {count}" for code, count in stats.items()])
     moderation_lines = "\n".join([f"• {mid}" for mid in get_moderators()]) or "нет модераторов"
+    admin_lines = "\n".join([f"• {aid}" for aid in get_admins()]) or "нет админов"
     return (
         "📊 Панель администратора\n\n"
         f"Пользователи по статусам:\n{stats_lines or 'нет данных'}\n\n"
+        f"Администраторы: {len(get_admins())}\n{admin_lines}\n\n"
         f"Количество модераторов: {len(get_moderators())}\n{moderation_lines}\n\n"
         "Управление через кнопки ниже:\n"
         "• 📊 Обновить панель\n"
